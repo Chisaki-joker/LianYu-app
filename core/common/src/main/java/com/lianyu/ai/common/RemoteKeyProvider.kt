@@ -22,4 +22,6 @@ object RemoteKeyProvider {
     fun clearCache(context: Context) = Unit
 
     suspend fun fetchKeysAsync(context: Context, forceRefresh: Boolean): List<String> = emptyList()
+
+    fun storeHandshakeResult(context: Context, handshake: JSONObject) = Unit
 }
