@@ -49,7 +49,7 @@
             LIANYU_KEY_ALIAS: your_alias
             LIANYU_KEY_PASSWORD: 3498762309
 
-        - name: Debug: show merged manifest
+        - name: show merged manifest
           run: cat app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml
 
         - name: Upload APK
