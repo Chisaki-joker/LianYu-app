@@ -25,11 +25,6 @@
             sed -i 's|maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }|// &|g' settings.gradle.kts
             sed -i 's|maven { url = uri("https://maven.aliyun.com/repository/central") }|// &|g' settings.gradle.kts
 
-        - name: Fix manifest source sets (remove shell manifest override)
-          run: |
-            sed -i '/getByName("debug")/,+2d' app/build.gradle.kts
-            sed -i '/getByName("release")/,+2d' app/build.gradle.kts
-
         - name: Generate keystore
           run: |
             keytool -genkeypair -v -keystore release.keystore \
