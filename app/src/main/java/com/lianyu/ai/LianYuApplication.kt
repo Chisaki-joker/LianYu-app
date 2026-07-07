@@ -80,6 +80,12 @@ class LianYuApplication : Application(), ImageLoaderFactory, androidx.work.Confi
         System.setProperty("sun.net.spi.nameservice.domain", ".")
         super.onCreate()
         instance = this
+        // 设置全局异常处理器，捕获启动阶段闪退并记录日志
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            SecureLog.e("LianYuApp", "FATAL: ${throwable.javaClass.simpleName}: ${throwable.message}", throwable)
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
         initBusiness(this)
     }
 
