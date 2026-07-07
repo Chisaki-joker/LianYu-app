@@ -80,13 +80,59 @@ class LianYuApplication : Application(), ImageLoaderFactory, androidx.work.Confi
         System.setProperty("sun.net.spi.nameservice.domain", ".")
         super.onCreate()
         instance = this
-        // 设置全局异常处理器，捕获启动阶段闪退并记录日志
+        // 设置全局异常处理器，捕获启动阶段闪退并记录日志到文件
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             SecureLog.e("LianYuApp", "FATAL: ${throwable.javaClass.simpleName}: ${throwable.message}", throwable)
+            // 将崩溃日志写入外部存储，方便用户在文件管理器中找到
+            writeCrashLogToFile(throwable)
             defaultHandler?.uncaughtException(thread, throwable)
         }
         initBusiness(this)
+    }
+
+    /**
+     * 将崩溃堆栈写入外部文件目录，用户无需 logcat 即可查看。
+     * 文件路径: Android/data/com.lianyu.ai/files/crashes/crash_<timestamp>.txt
+     * 使用系统自带"文件"App 即可访问。
+     */
+    private fun writeCrashLogToFile(throwable: Throwable) {
+        try {
+            val crashDir = java.io.File(getExternalFilesDir(null), "crashes")
+            crashDir.mkdirs()
+            val sdf = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
+            val crashFile = java.io.File(crashDir, "crash_${sdf.format(java.util.Date())}.txt")
+            crashFile.writeText(buildString {
+                appendLine("====== 恋语 崩溃报告 =====")
+                appendLine("时间: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+                appendLine("设备: ${android.os.Build.MODEL} (${android.os.Build.MANUFACTURER})")
+                appendLine("Android: ${android.os.Build.VERSION.RELEASE} (SDK ${android.os.Build.VERSION.SDK_INT})")
+                appendLine()
+                appendLine("=== 异常信息 ===")
+                appendThrowable(throwable, this)
+                appendLine()
+                appendLine("=== 应用信息 ===")
+                appendLine("版本: ${runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrDefault("?")}")
+                appendLine("进程: ${runCatching { android.os.Process.myPid() }.getOrDefault(-1)}")
+            })
+            SecureLog.i("LianYuApp", "崩溃日志已写入: ${crashFile.absolutePath}")
+        } catch (e: Exception) {
+            // 写文件失败时至少用 logcat 记录
+            SecureLog.e("LianYuApp", "无法写入崩溃文件: ${e.message}", e)
+        }
+    }
+
+    private fun appendThrowable(throwable: Throwable, sb: StringBuilder, indent: String = "") {
+        sb.appendLine("${indent}异常: ${throwable.javaClass.name}")
+        sb.appendLine("${indent}消息: ${throwable.message}")
+        sb.appendLine("${indent}堆栈:")
+        throwable.stackTrace.forEach { frame ->
+            sb.appendLine("${indent}    at $frame")
+        }
+        throwable.cause?.let { cause ->
+            sb.appendLine("${indent}--- 由以下原因引起 ---")
+            appendThrowable(cause, sb, indent)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -113,29 +159,66 @@ class LianYuApplication : Application(), ImageLoaderFactory, androidx.work.Confi
         private val bgScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         fun initBusiness(app: Application) {
+            val cp = StartupCheckpoint(app)
+            cp.log("START")
             SaltStore.init(app)
+            cp.log("SaltStore")
             SecureLog.init(com.lianyu.ai.BuildConfig.DEBUG)
+            cp.log("SecureLog")
             applyStoredLanguage(app)
+            cp.log("applyStoredLanguage")
             AiService.initialize(app)
+            cp.log("AiService.initialize")
             NtpTimeProvider.initialize(app)
+            cp.log("NtpTimeProvider")
             registerServiceProviders(app)
+            cp.log("registerServiceProviders")
             clearUpdateIgnore(app)
 
             // 注入应用级后台作用域，供跨越 ViewModel 生命周期的任务使用
             com.lianyu.ai.common.ApplicationScopeProvider.init(bgScope)
+            cp.log("ApplicationScopeProvider")
 
             // Seed default companion asynchronously — must exist before any chat opens
-            bgScope.launch { seedDefaultCompanion(app) }
+            bgScope.launch { cp.logAsync("seedDefaultCompanion-start"); seedDefaultCompanion(app); cp.logAsync("seedDefaultCompanion-done") }
 
-            bgScope.launch { ContentFilter.initialize(app) }
+            bgScope.launch { cp.logAsync("ContentFilter-init-start"); ContentFilter.initialize(app); cp.logAsync("ContentFilter-init-done") }
             bgScope.launch { preloadBackground(app) }
-            bgScope.launch { initWeChat(app) }
-            bgScope.launch { initSecurityData(app) }
+            bgScope.launch { cp.logAsync("initWeChat-start"); initWeChat(app); cp.logAsync("initWeChat-done") }
+            bgScope.launch { cp.logAsync("initSecurityData-start"); initSecurityData(app); cp.logAsync("initSecurityData-done") }
             bgScope.launch { autoBackupDatabase(app) }
-            bgScope.launch { initVectorLibrary(app) }
-            bgScope.launch { initSafetyClassifier(app) }
-            bgScope.launch { initSafetyVerifier(app) }
-            bgScope.launch { initYandereMode(app) }
+            bgScope.launch { cp.logAsync("initVectorLibrary-start"); initVectorLibrary(app); cp.logAsync("initVectorLibrary-done") }
+            bgScope.launch { cp.logAsync("initSafetyClassifier-start"); initSafetyClassifier(app); cp.logAsync("initSafetyClassifier-done") }
+            bgScope.launch { cp.logAsync("initSafetyVerifier-start"); initSafetyVerifier(app); cp.logAsync("initSafetyVerifier-done") }
+            bgScope.launch { cp.logAsync("initYandereMode-start"); initYandereMode(app); cp.logAsync("initYandereMode-done") }
+            cp.log("initBusiness-DONE")
+        }
+
+        /**
+         * 启动检查点辅助类 — 将每一步启动状态写入文件，闪退时可通过文件定位崩溃步骤。
+         * 文件路径: Android/data/com.lianyu.ai/files/startup_checkpoint.txt
+         */
+        private class StartupCheckpoint(app: Application) {
+            private val file = java.io.File(app.getExternalFilesDir(null), "startup_checkpoint.txt")
+            private val startTime = System.currentTimeMillis()
+
+            init {
+                file.writeText("=== 恋语启动检查点 (${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}) ===\n")
+            }
+
+            fun log(step: String) {
+                val elapsed = System.currentTimeMillis() - startTime
+                val line = "[+${elapsed}ms] $step"
+                SecureLog.i("Startup", line)
+                try { file.appendText("$line\n") } catch (_: Exception) {}
+            }
+
+            fun logAsync(step: String) {
+                val elapsed = System.currentTimeMillis() - startTime
+                val line = "[+${elapsed}ms] ASYNC $step"
+                SecureLog.i("Startup", line)
+                try { file.appendText("$line\n") } catch (_: Exception) {}
+            }
         }
 
         private suspend fun initYandereMode(app: Application) {
