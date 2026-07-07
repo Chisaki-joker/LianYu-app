@@ -13,6 +13,7 @@ import com.lianyu.ai.domain.LocalModelProvider
 import com.lianyu.ai.domain.ModelState
 import com.lianyu.ai.domain.ModelStatus
 import com.lianyu.ai.domain.ServiceRegistry
+import com.lianyu.ai.domain.AiServiceProvider
 import com.lianyu.ai.network.AiService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +32,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     // [R6 FIX] 改为懒加载 ServiceRegistry 单例：原 6 处直接 new AiService(getApplication())，
     // 每次点击都新建网关实例（含 OkHttpClient/Retrofit/重试器/限流器），绕过单例。
     private val aiService: AiService by lazy {
-        ServiceRegistry.getOrThrow(AiService::class.java)
+        ServiceRegistry.getOrThrow(AiServiceProvider::class.java) as AiService
     }
     // [R6 FIX] localModelProvider 也改 lazy，避免构造时 ServiceRegistry.get 返回 null
     private val localModelProvider by lazy {
@@ -537,8 +538,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
             if (allKeys.isEmpty()) {
                 updateConnectionStatus(key, ConnectionResult(ConnectionStatus.FAILED, 0L, "API Key 为空，请填写主密钥或检查远程Key服务"))
-                // [P4 NOTE] return@launch 在 try 内跳过 finally，但 finally 仅在 status==TESTING 时改 FAILED；
-                // 上面已设 FAILED，finally 为 no-op，故安全。
                 return@launch
             }
 
@@ -611,7 +610,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             // 确保有有效的模型名
             if (testConfig.model.isBlank()) {
                 updateConnectionStatus(key, ConnectionResult(ConnectionStatus.FAILED, 0L, "无法获取模型列表，请手动填写模型名称"))
-                // [P4 NOTE] 同上：已设 FAILED，finally 的 TESTING 兜底为 no-op，安全。
                 return@launch
             }
             
